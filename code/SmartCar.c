@@ -24,13 +24,22 @@ sbit LOUND = P5 ^ 4;  // 对应硬件连接
 
 bit busy;
 
-typedef unsigned char BYTE;
-typedef unsigned int WORD;
+typedef char I8;
+typedef int I16;
+typedef long I32;
+typedef unsigned char U8; 
 
-BYTE DATA_LENGTH = 7;
-BYTE CURRENT_LENGTH=0;
+U8 DATA_LENGTH = 9;
+U8 DATA_GET[]=  { 0x7E, 0, 0, 0, 0, 0, 0, 0, 0x7E};
+U8 SRCHeader = 0x7E;
+U8 SRCTail = 0x7E;
+U8 SRCDeviceID = 0x03;
+U8 SRCAID = 0x01;
+U8 CURRENT_LENGTH=0;
+U8 go=0;
+	static	 unsigned int   Timer4_Count=1;
+    unsigned char RES_DATA[]= { 0x7E, 0x00,0x01, 0x00, 0x02, 0x00, 0x00, 0x00, 0x7E};
 
-BYTE DATA_GET[]=  { 0x7E, 0x00,     0,  0,      0,      0,       0x7E};
 
 
 #define FOSC 11059200L          //系统频率
@@ -52,12 +61,16 @@ void ConnectServer();//连接服务器
 void USART_Init();
 void Device_Init();
 void ResponseData(unsigned char *RES_DATA);
-char CheckData(unsigned char *CHECK_DATA);
+unsigned char CheckData(unsigned char *CHECK_DATA);
 void sendAckData(unsigned char *RES_DATA);
 void ConnectSuccess();
+void Heat();
+void Timer4Init();
 
-void main()
-{
+
+void main(){
+
+
  P0M0 = 0x00;
     P0M1 = 0x00;
     P1M0 = 0x00;
@@ -83,6 +96,7 @@ void main()
 
 		ConnectSuccess();
 		
+		 Timer4Init();
     while(1) {
 
     };
@@ -104,6 +118,19 @@ void ConnectSuccess(){
 	  LOUND = 1;
 	 DELAY_MS(200);
 	  LOUND = 0;
+
+}
+
+
+void Heat(){
+
+	 LED = 1;
+	 DELAY_MS(200);
+		LED = 0;
+	 DELAY_MS(200);
+	  LED = 1;
+	 DELAY_MS(200);
+	  LED = 0;
 
 }
 
@@ -198,41 +225,98 @@ void UART_TC (unsigned char *str) {
 
 void UART_R()
 {
-    DATA_GET[CURRENT_LENGTH]=SBUF;
+		if((CURRENT_LENGTH==0)&&(SBUF==0x7E))// 判断第一个是不是0x7e  不确定是不是尾部7e
+	   {go=1;}
+
+	if((go==1)&&(CURRENT_LENGTH==1)&&(SBUF==0X7E))//第二个7e
+	   {CURRENT_LENGTH=0;} 
+
+	if(go==1)  //10个字符可以运行了
+	{
+		 DATA_GET[CURRENT_LENGTH]=SBUF;
     CURRENT_LENGTH++;
-    if(CURRENT_LENGTH==DATA_LENGTH)
+		
+		
+		if(CURRENT_LENGTH==DATA_LENGTH)
     {
         CURRENT_LENGTH=0;
+				go = 0;
         ResponseData(DATA_GET);
     }
+	}
+
+   
+	
+//		if(CURRENT_LENGTH==DATA_LENGTH )
+//    {
+//				if(DATA_GET[0] == 0x7E && DATA_GET[DATA_LENGTH-1] == 0x7E ){
+//						CURRENT_LENGTH=0;
+//						ResponseData(DATA_GET);
+//				}else {
+//				
+//				}
+//       
+//    }else if(	CURRENT_LENGTH==2 && DATA_GET[0]==0x7E && DATA_GET[1]==0x7E){
+//			CURRENT_LENGTH = 1;
+//		}
+
+		
+
 }
 
 
 
-char CheckData(unsigned char *CHECK_DATA) {
-
-    unsigned char  CHECKSUM = CHECK_DATA[1]+CHECK_DATA[2]+CHECK_DATA[3]+CHECK_DATA[4]-0x01;
-
-    return CHECKSUM;
-
+///校验数据准确性 做CRC校验
+unsigned char CheckData(unsigned char *mes){
+    unsigned char crc = 0;
+    unsigned char len = 6;
+    unsigned char i=0;
+    unsigned char cs=0;
+    unsigned char message[] = {0,0,0,0,0,0};
+    unsigned char *s = message;
+    for( cs=0;cs<len;cs++){
+        
+        s[cs] = mes[cs+1];
+    }
+    
+    
+    while(len--)
+    {
+        crc ^= *s++;
+        for(i = 0;i < 8;i++)
+        {
+            if(crc & 0x01)
+            {
+                crc = (crc >> 1) ^ 0x8c;
+            }
+            else crc >>= 1;
+        }
+    }
+    return crc;
 }
-
 
 
 void ResponseData(unsigned char *RES_DATA) {
 
-    if(CheckData(RES_DATA) == RES_DATA[5]) {
+    if((CheckData(RES_DATA) == RES_DATA[DATA_LENGTH-2]) && RES_DATA[1]== SRCDeviceID &&  RES_DATA[2]== SRCAID && RES_DATA[4]== 0x01 ) {
 
-        if(RES_DATA[1]==0x03 && RES_DATA[4]==0x02) {
+        if(RES_DATA[3]==0x00 ) {
+					RES_DATA[3]=0x04;//高两位数据 4代表温湿度指令
+					RES_DATA[5]= 0x11;//高两位数据
+					RES_DATA[6]= 0x13;//进制转换  低两位数据位
+
+            sendAckData(RES_DATA);
+						Heat();
+        } else	if(RES_DATA[3]==0x03 && RES_DATA[6]==0x02) {
             LED = 1;
             sendAckData(RES_DATA);
-        } else	if(RES_DATA[1]==0x03 && RES_DATA[4]==0x01) {
+        } else	if(RES_DATA[3]==0x03 && RES_DATA[6]==0x01) {
             LED = 0;
             sendAckData(RES_DATA);
-        } else if(RES_DATA[1]==0x02 && RES_DATA[4]==0x02) {
+        } else if(RES_DATA[3]==0x02 && RES_DATA[6]==0x02) {
             LOUND = 1;
             sendAckData(RES_DATA);
-        } else	if(RES_DATA[1]==0x02 && RES_DATA[4]==0x01) {
+        } else	if(RES_DATA[3]==0x02 && RES_DATA[6]==0x01) {
             LOUND = 0;
             sendAckData(RES_DATA);
         }
@@ -244,12 +328,19 @@ void ResponseData(unsigned char *RES_DATA) {
 void sendAckData(unsigned char *RES_DATA) {
 
 
-    unsigned char DATA_SEND[]= { 0x7E, 0x00,     0x02,  0x00,    0x00 ,      0x00,       0x7E};
+    unsigned char DATA_SEND[]= { 0x7E, 0x00,0x01, 0x00, 0x02, 0x00, 0x00, 0x00, 0x7E};
 
-    DATA_SEND[1]= RES_DATA[1];
-    DATA_SEND[4]= RES_DATA[4];
-    DATA_SEND[5]= CheckData(RES_DATA);
 
+    DATA_SEND[0]= SRCHeader;
+    DATA_SEND[1]= SRCDeviceID;
+    DATA_SEND[2]= SRCAID;
+    DATA_SEND[3]= RES_DATA[3];
+    DATA_SEND[5]= RES_DATA[5];
+    DATA_SEND[6]= RES_DATA[6];
+		    DATA_SEND[7]= CheckData(DATA_SEND);
+
+    DATA_SEND[DATA_LENGTH-1]= SRCTail;
+		
     SendData(DATA_SEND);
 
 }
@@ -285,36 +376,72 @@ void DELAY_MS(unsigned int timeout)		//@11.0592MHz
 
 void ConnectServer() {
 
+    DELAY_MS( 1000);
 
     UART_TC("+++\0"); // 退出透传模式
     DELAY_MS( 1000);
 
-    //UART_TC("AT\r\n\0");	// AT指令测试
-    //DELAY_MS(1500);
-
-    //UART_TC("AT+CWSTARTSMART\r\n\0"); // 开始智能配网模式
-    //DELAY_MS(1000);
-//	LED = 0; // 配网指示灯亮起
-//	DELAY_MS( 30000); // 链接成功
-
-    //UART_TC("AT+CWSTOPSMART\r\n\0"); // 结束智能配网模式，释放模块资源(必须)
-//	DELAY_MS( 1000);
-    //LED = 1; // 配网指示灯熄灭
-
+//    UART_TC("AT+RST\r\n\0");  // 复位
+//    DELAY_MS(2000);
+		
+		UART_TC("AT+CWMODE=1\r\n\0"); // 这是设置STA模式
+    DELAY_MS( 2500);
+		
     UART_TC("AT+CIPMUX=0\r\n\0");  // 设置单连接模式
-    DELAY_MS(1500);
+    DELAY_MS(1000);
 
-    UART_TC("AT+CIPSTART=\"TCP\",\"192.168.0.104\",4001\r\n\0");	// 连接到指定TCP服务器
-    DELAY_MS( 3500);
+    UART_TC("AT+CWJAP=\"Gunter\",\"{qwerty123}\"\r\n\0");  // 这一步便是连接wifi，延时的时间要长一些，否则会等不到返回的信息。10s
+    DELAY_MS(10000);
+
+
+    UART_TC("AT+CIPSTART=\"TCP\",\"47.104.19.111\",4001\r\n\0");	// 连接到指定TCP服务器
+    DELAY_MS( 5000);
 
     UART_TC("AT+CIPMODE=1\r\n\0"); // 设置透传模式
-    DELAY_MS( 1500);
+    DELAY_MS( 2000);
 
-    UART_TC("AT+SAVETRANSLINK=1,\"192.168.0.104\",4001,\"TCP\"\r\n\0"); // 保存TCP连接到flash，实现上电透传
-    DELAY_MS(1500);
+  // UART_TC("AT+SAVETRANSLINK=1,\"192.168.0.11\",4001,\"TCP\"\r\n\0"); // 保存TCP连接到flash，实现上电透传
+  // DELAY_MS(1000);
 
-    UART_TC("AT+CIPSEND\r\n\0");	 // 进入透传模式
+    UART_TC("AT+CIPSEND\r\n\0");	 // 进入透传模式 准备模块与电脑进行互传数据
     DELAY_MS( 1000);
 
     CURRENT_LENGTH=0;
+		
+		
+
+}
+
+
+
+void Timer4Init(void)		//5毫秒@11.0592MHz
+{
+	T4T3M |= 0x20;		//定时器时钟1T模式
+	T4L = 0x00;		//设置定时初值
+	T4H = 0x28;		//设置定时初值
+	T4T3M |= 0x80;		//定时器4开始计时
+		IE2 |= 0x40;		//开定时器4中断
+		EA=1; 	//总中断开启
+}
+
+
+//中断服务程序
+void Timer4_interrupt() interrupt 20           //中断入口
+
+{
+
+
+		if(Timer4_Count>=2500){
+			Timer4_Count = 1;
+			
+
+			RES_DATA[3]=0x04;//高两位数据 4代表温湿度指令
+					RES_DATA[5]= 0x66;//高两位数据
+					RES_DATA[6]= 0x67;//进制转换  低两位数据位
+			
+			sendAckData(RES_DATA);
+		}else{
+			
+		Timer4_Count++;
+		}
 }
